@@ -27,6 +27,7 @@ tasks:
           --python_out={{.GEN_PY_DIR}}
           --grpc_python_out={{.GEN_PY_DIR}}
           {{.PROTO_DIR}}/storage.proto
+      - sed -i '' 's/^import storage_pb2/from . import storage_pb2/' {{.GEN_PY_DIR}}/storage_pb2_grpc.py
       - touch {{.GEN_PY_DIR}}/__init__.py
 
   clean:
