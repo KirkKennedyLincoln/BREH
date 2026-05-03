@@ -1,0 +1,15 @@
+grpcio
+grpcio-tools
+huggingface_hub
+joblib
+numpy
+pandas
+protobuf
+requests
+scikit-learn
+scipy
+smolagents
+torch
+transformers
+xgboost
+python-dotenv

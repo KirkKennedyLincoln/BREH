@@ -1,0 +1,25 @@
+syntax = "proto3";
+package storage;
+option go_package = "github.com/KirkKennedyLincoln/BREH/gen/storagepb";
+
+service GraphStore {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+message Graph {
+  string id = 1;
+  string data = 2;
+  int64 created_at = 3;
+}
+
+message PutRequest { Graph graph = 1; }
+message PutResponse { bool success = 1; }
+message GetRequest { string id = 1; }
+message GetResponse { Graph graph = 1; }
+message ListRequest { string prefix = 1; }
+message ListResponse { repeated string ids = 1; }
+message DeleteRequest { string id = 1; }
+message DeleteResponse { bool success = 1; }
