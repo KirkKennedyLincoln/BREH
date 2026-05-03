@@ -1,4 +1,6 @@
-# Sustainable Cloud Scaling Synthesis
+# Behavior Regulation Environment Handler
+
+## Focusing on Sustainable Cloud Scaling Utilizing Agentic AI
 
 Masters capstone integrating:
 - **Project 3**: ML scaling prediction (XGBoost classifier)
