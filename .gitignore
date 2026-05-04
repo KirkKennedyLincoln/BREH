@@ -7,3 +7,5 @@
 **/*.venv*/**
 
 .task
+
+.mypy_cache
