@@ -53,6 +53,8 @@ scikit-learn==1.8.0
 scipy==1.17.1
 setuptools==82.0.1
 smolagents==1.24.0
+ddgs>=9.0
+markdownify>=0.13
 sniffio==1.3.1
 threadpoolctl==3.6.0
 tiktoken==0.12.0

@@ -15,7 +15,7 @@ import os
 import sys
 import json
 
-from tools import ScalingPredictorTool, GetGraphTool, PutGraphTool
+from tools import GetGraphTool, PutGraphTool, build_step_tools
 
 def main() -> int:
     graph_id = os.environ["GRAPH_ID"]
@@ -24,11 +24,9 @@ def main() -> int:
     get = GetGraphTool()
     put = PutGraphTool()
 
-    # Tools that can appear as a step's `tool` field. get/put are used
-    # directly above, not dispatched through the registry.
-    tools = {
-      "scaling_predictor": ScalingPredictorTool(models_dir="models"),
-    }
+    # Same registry the host executor uses, so any step the planner emits
+    # runs identically inline or in-container.
+    tools = build_step_tools(models_dir="models")
 
     graph = get.forward(graph_id=graph_id)
     if graph.get("error"):

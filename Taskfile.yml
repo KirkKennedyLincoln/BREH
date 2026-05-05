@@ -105,6 +105,17 @@ tasks:
       - nohup go run cmd/storage/main.go > storage.log 2>&1 &
       - echo "etcd + storage server up (logs storage.log)"
 
+  up:ensure:
+    desc: Idempotent — start etcd + storage server only if not already running. Used by `run` so repeated CLI invocations don't wipe etcd.
+    cmds:
+      - |
+        docker ps | grep -q synthesis-etcd || \
+          docker run -d --name synthesis-etcd -p 2379:2379 quay.io/coreos/etcd:v3.5.9 \
+            etcd --advertise-client-urls http://0.0.0.0:2379 --listen-client-urls http://0.0.0.0:2379
+      - |
+        lsof -i:50054 >/dev/null 2>&1 || \
+          ( nohup go run cmd/storage/main.go > storage.log 2>&1 & sleep 2 )
+
   down:
     desc: Stop storage + runner servers, etcd, and any leftover agent containers (idempotent)
     cmds:
@@ -118,7 +129,7 @@ tasks:
 
   run:
     desc: 'Run the CLI. Example: task run -- --plan "High latency detected"'
-    deps: [up]
+    deps: [up:ensure]
     cmds:
       - python main.py {{.CLI_ARGS}}
 
