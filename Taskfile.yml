@@ -86,6 +86,16 @@ tasks:
     cmds:
       - go run cmd/storage/main.go
 
+  runner:run:
+    desc: Run the Go runner server (foreground, :50055)
+    cmds:
+      - go run cmd/runner/main.go
+
+  image:build:
+    desc: Build the synthesis-agent Docker image
+    cmds:
+      - docker build -t synthesis-agent:latest .
+
   up:
     desc: Fresh bring-up — tears down anything running, then starts etcd + storage server
     cmds:
@@ -96,10 +106,13 @@ tasks:
       - echo "etcd + storage server up (logs storage.log)"
 
   down:
-    desc: Stop storage server + etcd (idempotent — never fails)
+    desc: Stop storage + runner servers, etcd, and any leftover agent containers (idempotent)
     cmds:
       - pkill -f "go run cmd/storage/main.go" 2>/dev/null || true
+      - pkill -f "go run cmd/runner/main.go" 2>/dev/null || true
       - lsof -ti:50054 | xargs kill -9 2>/dev/null || true
+      - lsof -ti:50055 | xargs kill -9 2>/dev/null || true
+      - docker ps -q --filter ancestor=synthesis-agent:latest | xargs -r docker rm -f 2>/dev/null || true
       - docker stop synthesis-etcd 2>/dev/null || true
       - docker rm synthesis-etcd 2>/dev/null || true
 
@@ -108,3 +121,21 @@ tasks:
     deps: [up]
     cmds:
       - python main.py {{.CLI_ARGS}}
+
+  demo:
+    desc: 'Self-contained end-to-end demo: down → up → runner → image → plan → execute via containers'
+    cmds:
+      - task: down
+      - task: up
+      - nohup go run cmd/runner/main.go > runner.log 2>&1 &
+      - sleep 2
+      - task: image:build
+      - |
+        echo ""
+        echo "=== Planning =================================================="
+        OUTPUT=$(python main.py --plan "High latency, QPS climbing")
+        echo "$OUTPUT"
+        ID=$(echo "$OUTPUT" | tail -n1 | awk '{print $NF}')
+        echo ""
+        echo "=== Executing $ID via containers (RUNNER_ADDR=:50055) ========"
+        RUNNER_ADDR=localhost:50055 python main.py --execute "$ID"
