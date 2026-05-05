@@ -2,7 +2,6 @@ version: '3'
 
 vars:
   PROTO_DIR: proto
-  GEN_GO_DIR: gen/storagepb
   GEN_PY_DIR: gen/python
 
 tasks:
@@ -11,25 +10,36 @@ tasks:
     deps: [proto:go, proto:python]
 
   proto:go:
-    desc: Generate Go code for storage.proto
+    desc: Generate Go code for every *.proto in proto/ (each into gen/<name>pb)
     cmds:
-      - mkdir -p {{.GEN_GO_DIR}}
-      - protoc -I {{.PROTO_DIR}} -I third_party/googleapis
-          --go_out={{.GEN_GO_DIR}} --go_opt=paths=source_relative
-          --go-grpc_out={{.GEN_GO_DIR}} --go-grpc_opt=paths=source_relative
-          {{.PROTO_DIR}}/storage.proto
+      - mkdir -p gen
+      - |
+        for f in {{.PROTO_DIR}}/*.proto; do
+          name=$(basename "$f" .proto)
+          outdir="gen/${name}pb"
+          mkdir -p "$outdir"
+          protoc -I {{.PROTO_DIR}} -I third_party/googleapis \
+            --go_out="$outdir" --go_opt=paths=source_relative \
+            --go-grpc_out="$outdir" --go-grpc_opt=paths=source_relative \
+            "$f"
+        done
 
   proto:python:
-    desc: Generate Python code for storage.proto
+    desc: Generate Python code for every *.proto in proto/ (all into gen/python)
     cmds:
       - mkdir -p {{.GEN_PY_DIR}}
-      - python -m grpc_tools.protoc -I {{.PROTO_DIR}} -I third_party/googleapis
-        --python_out={{.GEN_PY_DIR}}
-        --grpc_python_out={{.GEN_PY_DIR}}
-        --mypy_out={{.GEN_PY_DIR}}
-        --mypy_grpc_out={{.GEN_PY_DIR}}
-        {{.PROTO_DIR}}/storage.proto
-      - sed -i '' 's/^import storage_pb2/from . import storage_pb2/' {{.GEN_PY_DIR}}/storage_pb2_grpc.py
+      - |
+        python -m grpc_tools.protoc -I {{.PROTO_DIR}} -I third_party/googleapis \
+          --python_out={{.GEN_PY_DIR}} \
+          --grpc_python_out={{.GEN_PY_DIR}} \
+          --mypy_out={{.GEN_PY_DIR}} \
+          --mypy_grpc_out={{.GEN_PY_DIR}} \
+          {{.PROTO_DIR}}/*.proto
+      - |
+        for f in {{.GEN_PY_DIR}}/*_pb2_grpc.py; do
+          base=$(basename "$f" _pb2_grpc.py)
+          sed -i '' "s/^import ${base}_pb2/from . import ${base}_pb2/" "$f"
+        done
       - touch {{.GEN_PY_DIR}}/__init__.py
 
   clean:
@@ -61,10 +71,10 @@ tasks:
       - docker ps | grep synthesis-etcd
 
   etcd:stop:
-    desc: Stop and remove etcd container
+    desc: Stop and remove etcd container (idempotent)
     cmds:
-      - docker stop synthesis-etcd
-      - docker rm synthesis-etcd
+      - docker stop synthesis-etcd 2>/dev/null || true
+      - docker rm synthesis-etcd 2>/dev/null || true
 
   etcd:status:
     desc: Check if etcd is running
@@ -72,6 +82,29 @@ tasks:
       - docker ps | grep synthesis-etcd || echo "etcd not running"
 
   storage:run:
-    desc: Run the Go storage server
+    desc: Run the Go storage server (foreground)
     cmds:
       - go run cmd/storage/main.go
+
+  up:
+    desc: Fresh bring-up — tears down anything running, then starts etcd + storage server
+    cmds:
+      - task: down
+      - docker run -d --name synthesis-etcd -p 2379:2379 quay.io/coreos/etcd:v3.5.9
+          etcd --advertise-client-urls http://0.0.0.0:2379 --listen-client-urls http://0.0.0.0:2379
+      - nohup go run cmd/storage/main.go > storage.log 2>&1 &
+      - echo "etcd + storage server up (logs storage.log)"
+
+  down:
+    desc: Stop storage server + etcd (idempotent — never fails)
+    cmds:
+      - pkill -f "go run cmd/storage/main.go" 2>/dev/null || true
+      - lsof -ti:50054 | xargs kill -9 2>/dev/null || true
+      - docker stop synthesis-etcd 2>/dev/null || true
+      - docker rm synthesis-etcd 2>/dev/null || true
+
+  run:
+    desc: 'Run the CLI. Example: task run -- --plan "High latency detected"'
+    deps: [up]
+    cmds:
+      - python main.py {{.CLI_ARGS}}

@@ -1,8 +1,6 @@
-import os
-import joblib
-import numpy
-
-from smolagents import Tool
+import joblib # type: ignore[import-untyped]
+import numpy as np 
+from smolagents import Tool # type: ignore[import-untyped]
 
 
 class ScalingPredictorTool(Tool):
@@ -10,22 +8,23 @@ class ScalingPredictorTool(Tool):
 
     name = "scaling_predictor"
     description = "Predicts if cloud workload needs to scale up based on metrics"
-
-    # TODO: Define inputs dict with "metrics" key (type: object)
-    # TODO: Define output_type = "object"
-    inputs = {}
+    inputs = {"metrics": {"type": "object", "description": "dict of metric name -> value"}}
     output_type = "object"
 
-    def __init__(self, models_dir: str = None):
+    def __init__(self, models_dir: str = "models"):
         super().__init__()
-        self.classfier = joblib.load(f"{models_dir}/scaling_classifier.pkl")
+        self.classifier = joblib.load(f"{models_dir}/scaling_classifier.pkl")
         self.scaler = joblib.load(f"{models_dir}/scaling_scaler.pkl")
         self.features = joblib.load(f"{models_dir}/scaling_features.pkl")
 
     def forward(self, metrics: dict) -> dict:
-        feature_vectors = [metrics[x] for x in self.features] 
-        # TODO: Extract features in order from self.feature_names
-        # TODO: Scale with self.scaler.transform()
-        # TODO: Predict with self.model.predict() and predict_proba()
-        # TODO: Return dict with scale_up (bool), confidence (float), recommendation (str)
-        pass
+        feature_vectors = [[metrics[x] for x in self.features]]
+        scaled_vectors = self.scaler.transform(feature_vectors)
+        prediction = self.classifier.predict(scaled_vectors)[0]
+        proba = self.classifier.predict_proba(scaled_vectors)[0]
+
+        return {
+            "scale_up": bool(prediction),
+            "confidence": float(proba[prediction]),
+            "recommendation": "scale up now" if prediction else "no action"
+        }
