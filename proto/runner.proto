@@ -1,0 +1,29 @@
+syntax = "proto3";
+package runner;
+option go_package = "github.com/KirkKennedyLincoln/BREH/gen/runnerpb";
+
+service Runner {
+  rpc Spawn(SpawnRequest) returns (SpawnResponse); 
+  rpc Wait(WaitRequest) returns (WaitResponse);
+  rpc Kill(KillRequest) returns (KillResponse);
+  rpc List(ListRunnersRequest) returns (ListRunnersResponse);
+}
+
+message SpawnRequest { 
+    int32 id = 1; 
+    repeated string cmd = 2;
+    repeated string env = 3;
+    string image_name = 4;
+}
+message SpawnResponse { 
+    string id = 1; 
+}
+message WaitRequest { string id = 1; }
+message WaitResponse { 
+    float exit_code = 1; 
+    map<string, string> logs = 2;
+}
+message KillRequest { string id = 1; }
+message KillResponse { bool success = 1; }
+message ListRunnersRequest { repeated string ids = 1; }
+message ListRunnersResponse { repeated string responses = 1; }

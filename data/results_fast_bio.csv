@@ -1,0 +1,3 @@
+prompt_id,system,seed,wall_s,llm_calls,llm_time_s,input_tokens,output_tokens,tool_calls,tool_time_s,tools_per_llm,parallelism,scaling_decisions,scaling_escalations,model,answer_path
+hard_biology,breh,0,99.168,3,80.728,7364,8843,5,44.467,1.67,0.45,0,0,anthropic/claude-haiku-4-5,results_answers/hard_biology_breh_seed0.md
+hard_biology,smolagent,0,42.474,5,31.017,86991,2799,10,25.556,2.0,0.6,0,0,anthropic/claude-haiku-4-5,results_answers/hard_biology_smolagent_seed0.md

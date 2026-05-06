@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 
 	"github.com/KirkKennedyLincoln/BREH/gen/storagepb"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -54,7 +55,8 @@ func (s *Store) List(ctx context.Context, req *storagepb.ListRequest) (*storagep
 	}
 	ids := make([]string, len(res.Kvs))
 	for i, kv := range res.Kvs {
-		ids[i] = string(kv.Key)
+		after, _ := strings.CutPrefix(string(kv.Key), "/graphs/")
+		ids[i] = after
 	}
 	return &storagepb.ListResponse{Ids: ids}, nil
 }

@@ -2,55 +2,171 @@ version: '3'
 
 vars:
   PROTO_DIR: proto
-  GEN_GO_DIR: gen/storagepb
   GEN_PY_DIR: gen/python
 
 tasks:
-  default:
-    desc: Generate all proto files (Go + Python)
+
+  # ---------------------------------------------------------------------------
+  # User-facing commands (`task --list` shows only these)
+  # ---------------------------------------------------------------------------
+
+  setup:
+    desc: 'End-to-end install for a fresh clone (Python venv + protoc plugins + protos + agent image). Run this first, then `source .venv/bin/activate`.'
+    preconditions:
+      - sh: command -v python3 >/dev/null
+        msg: 'python3 not found — install Python 3.13+ first (https://www.python.org/downloads/).'
+      - sh: command -v go >/dev/null
+        msg: 'go not found — install Go (https://go.dev/dl/).'
+      - sh: command -v docker >/dev/null
+        msg: 'docker not found — install Docker Desktop (https://www.docker.com/products/docker-desktop/).'
+      - sh: docker info >/dev/null 2>&1
+        msg: 'docker daemon not running — start Docker Desktop.'
+    cmds:
+      - test -d .venv || python3 -m venv .venv
+      - .venv/bin/pip install --upgrade pip
+      - .venv/bin/pip install -r requirements.txt
+      - task: install-tools
+      - task: vendor-googleapis
+      - task: proto:gen
+      - task: image:build
+      - test -f .env || cp .env.example .env
+      - cmd: |
+          echo ""
+          echo "================================================================"
+          echo "  Setup complete."
+          echo ""
+          echo "  Next steps:"
+          echo "    1. source .venv/bin/activate"
+          echo "    2. Edit .env and set ANTHROPIC_API_KEY"
+          echo "    3. task up"
+          echo "    4. task bench -- prompts.sample.json results.csv"
+          echo "================================================================"
+        silent: true
+
+  main:
+    desc: 'Run the BREH CLI. Example: task main -- --plan "High latency detected"'
+    cmds:
+      - mkdir -p logs && python main.py {{.CLI_ARGS}} 2>&1 | tee logs/main.log
+
+  up:
+    desc: 'Bring up everything: etcd + storage server (:50054) + runner server (:50055). Logs land in logs/.'
+    cmds:
+      - task: down
+      - mkdir -p logs
+      - docker run -d --name synthesis-etcd -p 2379:2379 quay.io/coreos/etcd:v3.5.9
+          etcd --advertise-client-urls http://0.0.0.0:2379 --listen-client-urls http://0.0.0.0:2379
+      - nohup go run cmd/storage/main.go > logs/storage.log 2>&1 &
+      - nohup go run cmd/runner/main.go > logs/runner.log 2>&1 &
+      - sleep 2
+      - echo "up — storage :50054, runner :50055 (logs/storage.log, logs/runner.log)"
+
+  down:
+    desc: Tear down storage + runner + etcd + any leftover agent containers (idempotent).
+    cmds:
+      - pkill -f "go run cmd/storage/main.go" 2>/dev/null || true
+      - pkill -f "go run cmd/runner/main.go" 2>/dev/null || true
+      - lsof -ti:50054 | xargs kill -9 2>/dev/null || true
+      - lsof -ti:50055 | xargs kill -9 2>/dev/null || true
+      - docker ps -q --filter ancestor=synthesis-agent:latest | xargs -r docker rm -f 2>/dev/null || true
+      - docker stop synthesis-etcd 2>/dev/null || true
+      - docker rm synthesis-etcd 2>/dev/null || true
+
+  bench:
+    desc: 'Run the BREH-vs-smolagent benchmark. Example: task bench -- prompts.sample.json results.csv'
+    cmds:
+      - mkdir -p logs && python bench.py {{.CLI_ARGS}} 2>&1 | tee logs/bench.log
+
+  ticker:
+    desc: 'Run the continuous scaling ticker. Example: task ticker -- --interval 5 --threshold 0.55'
+    cmds:
+      - mkdir -p logs && python ticker.py {{.CLI_ARGS}} 2>&1 | tee logs/ticker.log
+
+
+  # ---------------------------------------------------------------------------
+  # Internal building blocks (hidden from `task --list`; still invokable directly)
+  # ---------------------------------------------------------------------------
+
+  proto:gen:
+    internal: true
+    desc: Generate Go + Python protos.
     deps: [proto:go, proto:python]
 
+  default:
+    internal: true
+    deps: [proto:gen]
+
   proto:go:
-    desc: Generate Go code for storage.proto
+    internal: true
     cmds:
-      - mkdir -p {{.GEN_GO_DIR}}
-      - protoc -I {{.PROTO_DIR}} -I third_party/googleapis
-          --go_out={{.GEN_GO_DIR}} --go_opt=paths=source_relative
-          --go-grpc_out={{.GEN_GO_DIR}} --go-grpc_opt=paths=source_relative
-          {{.PROTO_DIR}}/storage.proto
+      - mkdir -p gen
+      - |
+        for f in {{.PROTO_DIR}}/*.proto; do
+          name=$(basename "$f" .proto)
+          outdir="gen/${name}pb"
+          mkdir -p "$outdir"
+          protoc -I {{.PROTO_DIR}} -I third_party/googleapis \
+            --go_out="$outdir" --go_opt=paths=source_relative \
+            --go-grpc_out="$outdir" --go-grpc_opt=paths=source_relative \
+            "$f"
+        done
 
   proto:python:
-    desc: Generate Python code for storage.proto
+    internal: true
     cmds:
       - mkdir -p {{.GEN_PY_DIR}}
-      - python -m grpc_tools.protoc -I {{.PROTO_DIR}} -I third_party/googleapis
-          --python_out={{.GEN_PY_DIR}}
-          --grpc_python_out={{.GEN_PY_DIR}}
-          {{.PROTO_DIR}}/storage.proto
+      - |
+        python -m grpc_tools.protoc -I {{.PROTO_DIR}} -I third_party/googleapis \
+          --python_out={{.GEN_PY_DIR}} \
+          --grpc_python_out={{.GEN_PY_DIR}} \
+          --mypy_out={{.GEN_PY_DIR}} \
+          --mypy_grpc_out={{.GEN_PY_DIR}} \
+          {{.PROTO_DIR}}/*.proto
+      - |
+        for f in {{.GEN_PY_DIR}}/*_pb2_grpc.py; do
+          base=$(basename "$f" _pb2_grpc.py)
+          sed -i '' "s/^import ${base}_pb2/from . import ${base}_pb2/" "$f"
+        done
       - touch {{.GEN_PY_DIR}}/__init__.py
 
   clean:
-    desc: Remove all generated proto files
+    internal: true
     cmds:
       - rm -rf gen/*
 
   install-tools:
-    desc: Install required protoc plugins
+    internal: true
     cmds:
       - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
       - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
       - pip install grpcio-tools
 
   vendor-googleapis:
-    desc: Clone googleapis for proto includes
+    internal: true
     status:
       - test -d third_party/googleapis
     cmds:
       - mkdir -p third_party
       - git clone --depth 1 https://github.com/googleapis/googleapis third_party/googleapis
 
+  image:build:
+    internal: true
+    cmds:
+      - docker build -t synthesis-agent:latest .
+
+  storage:run:
+    internal: true
+    desc: Run the Go storage server (foreground; logs to logs/storage.log)
+    cmds:
+      - mkdir -p logs && go run cmd/storage/main.go 2>&1 | tee logs/storage.log
+
+  runner:run:
+    internal: true
+    desc: Run the Go runner server (foreground, :50055; logs to logs/runner.log)
+    cmds:
+      - mkdir -p logs && go run cmd/runner/main.go 2>&1 | tee logs/runner.log
+
   etcd:start:
-    desc: Start etcd in Docker
+    internal: true
     cmds:
       - docker run -d --name synthesis-etcd -p 2379:2379 quay.io/coreos/etcd:v3.5.9
           etcd --advertise-client-urls http://0.0.0.0:2379 --listen-client-urls http://0.0.0.0:2379
@@ -58,17 +174,48 @@ tasks:
       - docker ps | grep synthesis-etcd
 
   etcd:stop:
-    desc: Stop and remove etcd container
+    internal: true
     cmds:
-      - docker stop synthesis-etcd
-      - docker rm synthesis-etcd
+      - docker stop synthesis-etcd 2>/dev/null || true
+      - docker rm synthesis-etcd 2>/dev/null || true
 
   etcd:status:
-    desc: Check if etcd is running
+    internal: true
     cmds:
       - docker ps | grep synthesis-etcd || echo "etcd not running"
 
-  storage:run:
-    desc: Run the Go storage server
+  up:ensure:
+    internal: true
+    desc: Idempotent — start etcd + storage server only if not already running.
     cmds:
-      - go run cmd/storage/main.go
+      - |
+        docker ps | grep -q synthesis-etcd || \
+          docker run -d --name synthesis-etcd -p 2379:2379 quay.io/coreos/etcd:v3.5.9 \
+            etcd --advertise-client-urls http://0.0.0.0:2379 --listen-client-urls http://0.0.0.0:2379
+      - |
+        lsof -i:50054 >/dev/null 2>&1 || \
+          ( mkdir -p logs && nohup go run cmd/storage/main.go > logs/storage.log 2>&1 & sleep 2 )
+
+  run:
+    internal: true
+    desc: 'Run the CLI directly. Example: task run -- --plan "High latency detected"'
+    deps: [up:ensure]
+    cmds:
+      - python main.py {{.CLI_ARGS}}
+
+  demo:
+    internal: true
+    desc: 'Self-contained end-to-end demo: down → up → image → plan → execute via containers.'
+    cmds:
+      - task: down
+      - task: up
+      - task: image:build
+      - |
+        echo ""
+        echo "=== Planning =================================================="
+        OUTPUT=$(python main.py --plan "High latency, QPS climbing")
+        echo "$OUTPUT"
+        ID=$(echo "$OUTPUT" | tail -n1 | awk '{print $NF}')
+        echo ""
+        echo "=== Executing $ID via containers (RUNNER_ADDR=:50055) ========"
+        RUNNER_ADDR=localhost:50055 python main.py --execute "$ID"
