@@ -1,14 +1,14 @@
-import json
-import os
-import time
+import json # type: ignore
+import os # type: ignore
+import time # type: ignore
 
-import grpc
+import grpc # type: ignore
 from smolagents import Tool  # type: ignore[import-untyped]
 
 from gen.python import storage_pb2, storage_pb2_grpc
 
 
-def _stub() -> storage_pb2_grpc.GraphStoreStub:
+def stub() -> storage_pb2_grpc.GraphStoreStub:
     """Build a GraphStore client against $STORAGE_ADDR (default localhost:50054)."""
     addr = os.getenv("STORAGE_ADDR", "localhost:50054")
     return storage_pb2_grpc.GraphStoreStub(grpc.insecure_channel(addr))
@@ -29,7 +29,7 @@ class GetGraphTool(Tool):
 
     def __init__(self):
         super().__init__()
-        self.stub = _stub()
+        self.stub = stub()
 
     def forward(self, graph_id: str) -> dict:
         resp = self.stub.Get(storage_pb2.GetRequest(id=graph_id))
@@ -57,7 +57,7 @@ class ListGraphsTool(Tool):
 
     def __init__(self):
         super().__init__()
-        self.stub = _stub()
+        self.stub = stub()
 
     def forward(self, prefix: str = "") -> list:
         resp = self.stub.List(storage_pb2.ListRequest(prefix=prefix))
@@ -80,7 +80,7 @@ class PutGraphTool(Tool):
 
     def __init__(self):
         super().__init__()
-        self.stub = _stub()
+        self.stub = stub()
 
     def forward(self, graph_id: str, data: dict) -> dict:
         graph = storage_pb2.Graph(

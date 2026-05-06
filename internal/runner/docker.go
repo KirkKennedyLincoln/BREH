@@ -8,11 +8,9 @@ import (
 	"github.com/KirkKennedyLincoln/BREH/gen/runnerpb"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/go-connections/nat"
 )
 
 type Docker struct {
@@ -35,6 +33,18 @@ func (d *Docker) Close() error {
 	return d.cli.Close()
 }
 
+func ptrBool(arg bool) *bool {
+	return &arg
+}
+
+func ptrInt64(i int64) *int64 {
+	return &i
+}
+
+func (d *Docker) Socket() {
+	
+}
+
 func (d *Docker) Spawn(ctx context.Context, req *runnerpb.SpawnRequest) (*runnerpb.SpawnResponse, error) {
 	cfg := &container.Config{
 		Image: req.ImageName,
@@ -43,55 +53,44 @@ func (d *Docker) Spawn(ctx context.Context, req *runnerpb.SpawnRequest) (*runner
 	}
 
 	hostCfg := &container.HostConfig{
-		Binds:           []string{},
-		ContainerIDFile: "",
-		LogConfig:       container.LogConfig{},
-		NetworkMode:     "",
-		PortBindings:    nat.PortMap{},
-		RestartPolicy:   container.RestartPolicy{},
-		AutoRemove:      false,
-		VolumeDriver:    "",
-		VolumesFrom:     []string{},
-		ConsoleSize:     [2]uint{},
-		Annotations:     map[string]string{},
-		CapAdd:          strslice.StrSlice{},
-		CapDrop:         strslice.StrSlice{},
-		CgroupnsMode:    "",
-		DNS:             []string{},
-		DNSOptions:      []string{},
-		DNSSearch:       []string{},
-		ExtraHosts:      []string{},
-		GroupAdd:        []string{},
-		IpcMode:         "",
-		Cgroup:          "",
-		Links:           []string{},
-		OomScoreAdj:     0,
-		PidMode:         "",
-		Privileged:      false,
-		PublishAllPorts: false,
-		ReadonlyRootfs:  false,
-		SecurityOpt:     []string{},
-		StorageOpt:      map[string]string{},
-		Tmpfs:           map[string]string{},
-		UTSMode:         "",
-		UsernsMode:      "",
-		ShmSize:         0,
-		Sysctls:         map[string]string{},
-		Runtime:         "",
-		Isolation:       "",
-		Resources:       container.Resources{},
-		Mounts:          []mount.Mount{},
-		MaskedPaths:     []string{},
-		ReadonlyPaths:   []string{},
-		Init:            new(bool),
+		// one-shot lifecycle
+		AutoRemove: false,
+		RestartPolicy: container.RestartPolicy{
+			Name: "no",
+		},
+		Init: ptrBool(true),
+
+		// resource caps -> prevents agent from running away with memory usage
+		Resources: container.Resources{
+			NanoCPUs:   1_000_000_000,     // 1 CPU
+			Memory:     512 * 1024 * 1024, // 512MiB
+			MemorySwap: 512 * 1024 * 1024, // 512 MiB
+			PidsLimit:  ptrInt64(256),     // prevent DDOS'ing myself
+		},
+
+		// hardening for external LLM usage
+		ReadonlyRootfs: true,
+		CapDrop:        strslice.StrSlice{"ALL"},
+		SecurityOpt:    []string{"no-new-privileges:true"},
+		// host-gateway resolves to the host on Linux; harmless on Mac/Windows
+		// where Docker Desktop already injects host.docker.internal.
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
+
+		// logging -> bound disk usage for chatty agents
+		LogConfig: container.LogConfig{
+			Type:   "json-file",
+			Config: map[string]string{"max-size": "10m", "max-file": "3"},
+		},
 	}
 
 	resp, err := d.cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, "")
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
-	d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return nil, err
+	}
 	return &runnerpb.SpawnResponse{
 		Id: resp.ID,
 	}, nil
@@ -101,6 +100,7 @@ func (d *Docker) Wait(ctx context.Context, req *runnerpb.WaitRequest) (*runnerpb
 	var exitCode int64
 	statusCh, errCh := d.cli.ContainerWait(ctx, req.Id, container.WaitConditionNotRunning)
 
+	// block on channels waiting for results
 	select {
 	case err := <-errCh:
 		return nil, err

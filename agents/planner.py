@@ -4,15 +4,17 @@ import json
 import time
 import uuid
 
-import grpc
+import grpc # type: ignore
 import litellm
+from pydantic import ValidationError
 
 from tools import build_step_tools
 from gen.python import storage_pb2_grpc, storage_pb2
 from .schema import Graph
 
 
-def _record_usage(response, model_id: str, call_type: str, duration: float) -> dict:
+def record_usage(response, model_id: str, call_type: str, duration: float) -> dict:
+    """Tracking usage of invoked agents input/output tokens, etc."""
     usage = getattr(response, "usage", None)
     return {
         "call": call_type,
@@ -22,31 +24,19 @@ def _record_usage(response, model_id: str, call_type: str, duration: float) -> d
         "output_tokens": getattr(usage, "completion_tokens", None),
     }
 
-
-def _extract_json(text: str) -> str:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    return match.group(0) if match else text
-
-
-def _shrink(value, char_cap: int):
-    """Recursively cap any long strings inside a result. Web_search and
-    visit_webpage outputs are huge raw markdown — replan doesn't need the
-    full body, just enough signal to decide next steps."""
+def shrink(value, char_cap: int):
     if isinstance(value, str) and len(value) > char_cap:
-        return value[:char_cap] + f"\n... [truncated, original {len(value)} chars]"
+        return value[:char_cap] + "..."
     if isinstance(value, dict):
-        return {k: _shrink(v, char_cap) for k, v in value.items()}
+        return {k: shrink(v, char_cap) for k, v in value.items()}
     if isinstance(value, list):
-        return [_shrink(v, char_cap) for v in value]
+        return [shrink(v, char_cap) for v in value]
     return value
 
 
-def _compress_results(results: list, char_cap: int = 1200, keep_last: int = 10) -> list:
-    """Drop everything but the last `keep_last` step results, then cap any
-    string field at `char_cap`. Keeps replan input bounded regardless of how
-    long the loop has been running."""
-    recent = results[-keep_last:] if len(results) > keep_last else results
-    return [_shrink(dict(r), char_cap) for r in recent]
+def compress_results(results: list, char_cap: int = 1200, keep: int = 10) -> list:
+    recent = results[-keep:]
+    return [shrink(dict(r), char_cap) for r in recent]
 
 
 class PlannerAgent:
@@ -67,45 +57,49 @@ class PlannerAgent:
         self.tools = build_step_tools(models_dir="models")
         self.trace: list[dict] = []  # one entry per LLM round-trip
 
-    def _tool_block(self) -> str:
-        lines = []
-        for name, tool in self.tools.items():
-            lines.append(
-                f"  - {name}: {tool.description}\n"
-                f"      inputs: {json.dumps(tool.inputs)}"
-            )
-        return "\n".join(lines)
-
     def plan(self, request: str, metrics: dict | None = None) -> dict:
         plan_id = f"plan-{uuid.uuid4().hex[:8]}"
         metrics_line = (
             f"Current metrics (use only if a step actually needs them): "
             f"{json.dumps(metrics)}\n" if metrics else ""
         )
-        prompt = (
-            "You are a planning agent. Given a user request, emit a JSON DAG "
-            "of steps. Each step invokes ONE of the available tools. Steps "
-            "may depend on earlier ones via depends_on. Pick whichever tools "
-            "fit the request — you do not have to use all of them.\n\n"
-            f"User request: {request}\n"
-            f"{metrics_line}"
-            f"Available tools:\n{self._tool_block()}\n\n"
-            "Output ONLY valid JSON (no prose, no markdown fences) matching:\n"
-            "{\n"
-            f'  "id": "{plan_id}",\n'
-            f'  "request": "{request}",\n'
-            f'  "created_at": {int(time.time())},\n'
-            '  "steps": [\n'
-            '    {"id": "s1", "tool": "<tool_name>",\n'
-            '     "args": {<inputs satisfying the tool schema>},\n'
-            '     "weight": <0.0-1.0>, "depends_on": []}\n'
-            '  ]\n'
-            "}\n\n"
-            "Constraints: at least 3 steps. Each step's args must satisfy "
-            "the chosen tool's input schema. Weights reflect your confidence "
-            "the step is worth executing. Use depends_on for steps that "
-            "logically need earlier outputs."
+        tools_block = "\n".join(
+            f"\t- {name}: {tool.description}\n\t\tinputs: {json.dumps(tool.inputs)}"
+            for name, tool in self.tools.items()
         )
+        prompt = (f"""
+            You are a planning agent. Given a user request, emit a JSON DAG
+            of steps. Each step invokes ONE of the available tools. Steps
+            may depend on earlier ones via depends_on. Pick whichever tools
+            fit the request — you do not have to use all of them.
+
+            User request: {request}
+            {metrics_line}
+            Available tools:
+            {tools_block}
+
+            Output ONLY valid JSON (no prose, no markdown fences) matching:
+            {{
+            "id": "{plan_id}",
+            "request": "{request}",
+            "created_at": {int(time.time())},
+            "steps": [
+                {{
+                "id": "s1",
+                "tool": "<tool_name>",
+                "args": {{<inputs satisfying the tool schema>}},
+                "weight": <0.0-1.0>,
+                "depends_on": []
+                }}
+            ]
+            }}
+
+            Constraints:
+            - at least 3 steps
+            - each step's args must satisfy the chosen tool's input schema
+            - weights reflect your confidence the step is worth executing
+            - use depends_on for steps that logically need earlier outputs
+        """)
 
         t0 = time.monotonic()
         response = litellm.completion(
@@ -114,86 +108,118 @@ class PlannerAgent:
             messages=[{"role": "user", "content": prompt}],
             max_tokens=2000,
         )
-        self.trace.append(_record_usage(response, self.model_id, "plan", time.monotonic() - t0))
+        self.trace.append(record_usage(response, self.model_id, "plan", time.monotonic() - t0))
         raw = response.choices[0].message.content or ""
-        graph_dict = json.loads(_extract_json(raw))
-        graph = Graph(**graph_dict)
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        try:
+            graph_dict = json.loads(match.group(0) if match else raw)
+            graph = Graph(**graph_dict)
+        except (json.JSONDecodeError, ValidationError) as e:
+            return {
+                "id": plan_id, "request": request, "created_at": int(time.time()),
+                "steps": [], "_plan_failed": True, "_error": str(e), "_raw": raw[:500],
+            }
         return graph.model_dump()
 
     def replan(self, request: str, prior_results: list) -> dict:
-        prior_results = _compress_results(prior_results)
-        """Round-trip back to the mother LLM with the high-confidence results
-        already gathered. The LLM decides one of:
-
-          - we have enough → return {"status": "done", "answer": "<text>"}
-          - need more work → return {"status": "continue", "graph": <new DAG>}
-
-        The new DAG follows the same Pydantic schema as `plan()` — a fresh
-        plan_id, the same `request`, and steps using the available tools.
-        """
-        prompt = (
-            "You previously emitted a DAG of work. The high-confidence steps "
-            "(weight above the threshold) have been executed; results are "
-            "below. Decide whether the original request is now answerable or "
-            "whether more work is needed.\n\n"
-            f"Original request: {request}\n"
-            f"Results so far (most-confident first):\n"
-            f"{json.dumps(prior_results, indent=2, default=str)}\n\n"
-            "Respond with ONLY valid JSON. ONE of these two shapes:\n\n"
-            '  {"status": "done",\n'
-            '   "answer": "<final answer to the original request>",\n'
-            '   "followup": "<optional new top-level query, or null>",\n'
-            '   "extension_confidence": <0.0-1.0, REQUIRED if followup is set>}\n\n'
-            '  {"status": "continue",\n'
-            '   "graph": {<new graph dict>},\n'
-            '   "extension_confidence": <0.0-1.0, REQUIRED>}\n\n'
-            "Rules for the `done` case:\n"
-            " - `answer` must fully address the ORIGINAL request.\n"
-            " - `followup` is OPTIONAL. Include it ONLY if your answer "
-            "contains concrete next-steps the user would profitably research "
-            "as a SEPARATE top-level query (specific URLs to evaluate, sub-"
-            "topics to deep-dive, libraries to compare). Phrase it as a "
-            "natural-language query string. Set null or omit if the answer "
-            "is self-contained.\n"
-            " - `extension_confidence` is REQUIRED whenever `followup` is "
-            "set, and reflects how strongly you believe pursuing the followup "
-            "would materially improve the answer. Use 0.9+ ONLY if you are "
-            "highly confident the followup uncovers something the current "
-            "answer misses. Otherwise, score honestly below 0.9 (or omit "
-            "followup entirely).\n\n"
-            "Rules for the `continue` case:\n"
-            " - Use this when the original request is NOT yet answered and "
-            "more work in the same DAG is needed. The new graph extends the "
-            "same `request`.\n"
-            " - `extension_confidence` is REQUIRED: how strongly you believe "
-            "the new sub-DAG materially improves the answer vs synthesizing "
-            "from current results. Use 0.9+ only when extension is essential.\n\n"
-            f"Available tools (for the continue case):\n{self._tool_block()}\n\n"
-            "If continuing, the graph must match this shape:\n"
-            "{\n"
-            f'  "id": "plan-<8-hex>",\n'
-            f'  "request": "{request}",\n'
-            f'  "created_at": <unix-seconds>,\n'
-            '  "steps": [{"id": "...", "tool": "...", "args": {...},\n'
-            '             "weight": <0-1>, "depends_on": []}, ...]\n'
-            "}\n"
+        prior_results = compress_results(prior_results)
+        tools_block = "\n".join(
+            f"\t- {name}: {tool.description}\n\t\tinputs: {json.dumps(tool.inputs)}"
+            for name, tool in self.tools.items()
         )
+        prompt = (f"""
+            You previously emitted a DAG of work. The high-confidence steps
+            (weight above the threshold) have been executed; results are
+            below. Decide whether the original request is now answerable or
+            whether more work is needed.
+
+            Original request: {request}
+
+            Results so far (most-confident first):
+            {json.dumps(prior_results, indent=2, default=str)}
+
+            Respond with ONLY valid JSON. ONE of these two shapes:
+
+            ```json{{
+            "status": "done",
+            "answer": "<final answer to the original request>",
+            "followup": "<optional new top-level query, or null>",
+            "extension_confidence": <0.0-1.0, REQUIRED if followup is set>
+            }}```
+
+            ```json{{
+            "status": "continue",
+            "graph": {{<new graph dict>}},
+            "extension_confidence": <0.0-1.0, REQUIRED>
+            }}```
+
+            Rules for the `done` case:
+            - `answer` must fully address the ORIGINAL request.
+            - `followup` is OPTIONAL. Include it ONLY if your answer
+            contains concrete next-steps the user would profitably research
+            as a SEPARATE top-level query (specific URLs to evaluate, sub-
+            topics to deep-dive, libraries to compare). Phrase it as a
+            natural-language query string. Set null or omit if the answer
+            is self-contained.
+            - `extension_confidence` is REQUIRED whenever `followup` is
+            set, and reflects how strongly you believe pursuing the followup
+            would materially improve the answer. Use 0.9+ ONLY if you are
+            highly confident the current answer is not suffice. In education,
+            .70 is considered passing, so if you are able to say this answer has
+            less than 70% of what was asked for then return a 0.9+ score.
+            Otherwise, score honestly below 0.9 or 0.89 (auto-pass) so we can
+            return the answer as the final answer (circuit-breaker).
+
+            Rules for the `continue` case:
+            - Use this when the original request is NOT yet answered and
+            more work in the same DAG is needed. The new graph extends the
+            same `request`.
+            - `extension_confidence` is REQUIRED: how strongly you believe
+            the new sub-DAG materially improves the answer vs synthesizing
+            from current results. Use 0.9+ only when extension is essential, which
+            means the answer does not provide a rough estimation of 70% of the idea
+            or concept asked for.
+
+            Available tools (for the continue case):
+            {tools_block}
+
+            If continuing, the graph must match this shape:
+            ```json{{
+            "id": "plan-<8-hex>",
+            "request": "{request}",
+            "created_at": <unix-seconds>,
+            "steps": [
+                {{
+                "id": "...",
+                "tool": "...",
+                "args": {{...}},
+                "weight": <0-1>,
+                "depends_on": []
+                }},
+                ...
+            ]
+            }}```
+        """)
         t0 = time.monotonic()
         response = litellm.completion(
             model=self.model_id,
             api_key=self.api_key,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
+            max_tokens=4000,
         )
-        self.trace.append(_record_usage(response, self.model_id, "replan", time.monotonic() - t0))
+        self.trace.append(record_usage(response, self.model_id, "replan", time.monotonic() - t0))
         raw = response.choices[0].message.content or ""
-        return json.loads(_extract_json(raw))
+        try:
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            return json.loads(
+                match.group(0) if match else raw
+            )
+        except json.JSONDecodeError:
+            return {"status": "done", "answer": "", "_replan_failed": True, "_raw": raw[:500]}
 
     def synthesize(self, request: str, prior_results: list) -> str:
-        """Final-answer call. Used when the loop has hit max_iterations
-        without a 'done' status — forces the LLM to produce an answer from
-        whatever has accumulated, with no option to continue/research more."""
-        prior_results = _compress_results(prior_results)
+        """Final answer to either enforce or call when agent is ready."""
+        prior_results = compress_results(prior_results)
         prompt = (
             "You have accumulated research results from earlier iterations. "
             "Produce a FINAL answer to the original request now. No further "
@@ -210,9 +236,9 @@ class PlannerAgent:
             model=self.model_id,
             api_key=self.api_key,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
+            max_tokens=8000,
         )
-        self.trace.append(_record_usage(response, self.model_id, "synthesize", time.monotonic() - t0))
+        self.trace.append(record_usage(response, self.model_id, "synthesize", time.monotonic() - t0))
         return response.choices[0].message.content or "(empty)"
 
     def save_graph(self, graph_id: str, graph_data: dict) -> bool:

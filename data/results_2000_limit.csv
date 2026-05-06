@@ -1,0 +1,11 @@
+prompt_id,system,seed,wall_s,llm_calls,llm_time_s,input_tokens,output_tokens,tool_calls,tool_time_s,tools_per_llm,scaling_decisions,scaling_escalations,model,answer_path,gold,error
+j2ee,breh,0,8.607,2,8.054,2220,1029,5,0.0,2.5,0,0,anthropic/claude-haiku-4-5,results_answers/j2ee_breh_seed0.md,,
+j2ee,smolagent,0,22.085,3,14.523,22977,1411,4,9.207,1.33,0,0,anthropic/claude-haiku-4-5,results_answers/j2ee_smolagent_seed0.md,,
+scaling,breh,0,12.705,5,12.399,5496,1456,5,0.0,1.0,0,0,anthropic/claude-haiku-4-5,results_answers/scaling_breh_seed0.md,,
+scaling,smolagent,0,31.15,12,20.938,55705,905,11,10.071,0.92,0,0,anthropic/claude-haiku-4-5,results_answers/scaling_smolagent_seed0.md,,
+multihop,breh,0,5.674,3,5.391,3398,619,4,0.0,1.33,0,0,anthropic/claude-haiku-4-5,results_answers/multihop_breh_seed0.md,,
+multihop,smolagent,0,14.633,4,5.573,17814,282,4,12.009,1.0,0,0,anthropic/claude-haiku-4-5,results_answers/multihop_smolagent_seed0.md,,
+hard_math,breh,0,8.612,2,8.416,1907,1330,1,0.0,0.5,0,0,anthropic/claude-haiku-4-5,results_answers/hard_math_breh_seed0.md,,
+hard_math,smolagent,0,6.856,1,6.766,2118,1095,0,0.0,0.0,0,0,anthropic/claude-haiku-4-5,results_answers/hard_math_smolagent_seed0.md,,
+hard_biology,breh,0,46.078,3,45.943,4720,4839,4,0.0,1.33,0,0,anthropic/claude-haiku-4-5,results_answers/hard_biology_breh_seed0.md,,
+hard_biology,smolagent,0,94.775,5,81.003,51185,8709,10,31.258,2.0,0,0,anthropic/claude-haiku-4-5,results_answers/hard_biology_smolagent_seed0.md,,

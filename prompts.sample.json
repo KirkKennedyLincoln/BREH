@@ -1,0 +1,14 @@
+[
+  {
+    "id": "j2ee",
+    "prompt": "research best approaches to building a J2EE Spring Boot server"
+  },
+  {
+    "id": "scaling",
+    "prompt": "given metrics QPS=10 QUEUE_RT=6 INFERENCE=380, should I scale up?"
+  },
+  {
+    "id": "multihop",
+    "prompt": "what year did the company that makes the Claude API release its first model, and which Anthropic founder previously worked at OpenAI?"
+  }
+]

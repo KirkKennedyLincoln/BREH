@@ -7,20 +7,16 @@ import json
 from agents import PlannerAgent, ExecutorAgent
 from agents.schema import Graph
 
-
+# metrics from module 3
 SAMPLE_METRICS = {
     "BYTES": 0.92, "CONTROL": 1450, "DUTY": 380, "INFERENCE": 380,
     "LORA": True, "MODEL": 1.0, "PIPELINE": 1.0, "QPS": 10, "QUEUE_RT": 6,
 }
 
-
-def _print_results(results: list) -> None:
-    for r in results:
-        loc = r.get("location", "?")
-        print(f"  [{r['weight']:.2f}] {r['id']} ({loc}) → {r['tool']}: {r['output']}")
-
-
-def _print_trace(planner: PlannerAgent, executor: ExecutorAgent) -> None:
+def print_trace(
+    planner: PlannerAgent, 
+    executor: ExecutorAgent
+) -> None:
     print("\n=== Trace ===")
     print(f"\nLLM calls: {len(planner.trace)}")
     for i, c in enumerate(planner.trace, 1):
@@ -45,71 +41,63 @@ def _print_trace(planner: PlannerAgent, executor: ExecutorAgent) -> None:
     print(f"Tool time:   {tool_time:>7.3f}s")
     print(f"Total time:  {llm_time + tool_time:>7.3f}s")
 
-
-def _execute_with_replan(executor: ExecutorAgent, planner: PlannerAgent,
-                         graph_id: str, max_iterations: int) -> None:
-    """Execute → replan loop. Stops when the LLM says 'done', when the LLM
-    can't produce a continuation, or when max_iterations is hit."""
+def run_replan_loop(executor, planner, graph_id, max_iter):
     graph = executor.fetch_graph(graph_id)
     if graph is None:
-        print(f"no graph found for id: {graph_id}")
+        print(f"no graph: {graph_id}")
         return
-    request = graph["request"]
-    accumulated: list = []
 
-    for iteration in range(1, max_iterations + 1):
-        print(f"\n=== Iteration {iteration}: executing {graph_id} ===")
+    request = graph["request"]
+    accumulated = []
+    answer = None
+
+    for i in range(1, max_iter + 1):
+        print(f"\n=== iter {i}: {graph_id} ===")
         results = executor.execute(graph_id)
-        if not results:
-            print("(no steps above threshold)")
+        if results:
+            print(results)
         else:
-            _print_results(results)
+            print("(nothing above threshold)")
         accumulated.extend(results)
 
         decision = planner.replan(request, accumulated)
         status = decision.get("status")
 
         if status == "done":
-            answer = decision.get("answer", "(no answer)")
-            print(f"\n=== Iteration {iteration} answer ===\n{answer}")
+            answer = decision.get("answer") or ""
+            if answer:
+                print(f"\n=== answer ===\n{answer}")
             followup = decision.get("followup")
-            if followup and iteration < max_iterations:
-                # The answer was high-confidence AND suggested concrete next
-                # steps — treat the followup as a fresh top-level query and
-                # plan from scratch. Reset accumulated so the next replan
-                # judges the new query on its own merits.
-                print(f"\n--- LLM suggested follow-up: {followup}\n")
-                new_graph = planner.plan(followup)
-                planner.save_graph(new_graph["id"], new_graph)
-                graph_id = new_graph["id"]
-                request = followup
-                accumulated = []
+            if followup and i < max_iter:
+                # treat followup as a fresh top-level query
+                print(f"\nfollowup: {followup}")
+                g = planner.plan(followup)
+                planner.save_graph(g["id"], g)
+                graph_id, request, accumulated = g["id"], followup, []
+                answer = None
                 continue
-            _print_trace(planner, executor)
-            return
-        if status == "continue":
-            new_graph = decision.get("graph")
-            if not new_graph:
-                print("LLM said continue but provided no graph; stopping.")
-                return
-            # Validate against the schema before persisting.
-            validated = Graph(**new_graph).model_dump()
-            planner.save_graph(validated["id"], validated)
-            graph_id = validated["id"]
-            print(f"\nLLM extended the plan → {graph_id}")
-            continue
-        print(f"unexpected replan status: {status!r}; stopping.")
-        _print_trace(planner, executor)
-        return
+            break
 
-    # Loop exhausted without a 'done' status — force a final synthesis from
-    # whatever has been gathered. One extra LLM call, but the user always
-    # gets an answer instead of a silent exit with results discarded.
-    print(f"\n=== max iterations ({max_iterations}) reached — "
-          f"synthesizing from {len(accumulated)} accumulated step result(s) ===")
-    answer = planner.synthesize(request, accumulated)
-    print(f"\n=== Final answer ===\n{answer}")
-    _print_trace(planner, executor)
+        if status == "continue":
+            g = decision.get("graph")
+            if not g:
+                break
+            valid = Graph(**g).model_dump()
+            planner.save_graph(valid["id"], valid)
+            graph_id = valid["id"]
+            print(f"\nplan extended: {graph_id}")
+            continue
+
+        # unknown status, bail
+        break
+
+    # if the loop exits without an answer for any reason, synthesize from
+    # whatever we collected so the caller never sees nothing
+    if not answer:
+        answer = planner.synthesize(request, accumulated)
+        print(f"\n=== final answer ===\n{answer}")
+
+    print_trace(planner, executor)
 
 
 def main():
@@ -134,7 +122,7 @@ def main():
     elif args.execute:
         executor = ExecutorAgent(weight_threshold=args.threshold)
         planner = PlannerAgent()
-        _execute_with_replan(executor, planner, args.execute, args.max_iterations)
+        run_replan_loop(executor, planner, args.execute, args.max_iterations)
 
     elif args.list:
         ids = ExecutorAgent().list_graphs()

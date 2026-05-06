@@ -28,4 +28,5 @@ __all__ = [
     'DuckDuckGoSearchTool',
     'VisitWebpageTool',
     'build_step_tools',
+    'direct_answer_tool', 
 ]

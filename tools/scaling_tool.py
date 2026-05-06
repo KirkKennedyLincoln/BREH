@@ -4,11 +4,8 @@ import joblib  # type: ignore[import-untyped]
 import numpy as np
 from smolagents import Tool  # type: ignore[import-untyped]
 
-# The Project-3 .pkl artefacts were trained on sklearn 1.7.2; this venv ships
-# 1.8.0. The pickles still unpickle fine — silence the cross-version chatter
-# so it doesn't drown out the actual run output.
 try:
-    from sklearn.exceptions import InconsistentVersionWarning
+    from sklearn.exceptions import InconsistentVersionWarning # type: ignore
     warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 except ImportError:
     pass

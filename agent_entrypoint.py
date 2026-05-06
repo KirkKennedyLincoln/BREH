@@ -24,8 +24,6 @@ def main() -> int:
     get = GetGraphTool()
     put = PutGraphTool()
 
-    # Same registry the host executor uses, so any step the planner emits
-    # runs identically inline or in-container.
     tools = build_step_tools(models_dir="models")
 
     graph = get.forward(graph_id=graph_id)
@@ -39,6 +37,10 @@ def main() -> int:
     tool = tools.get(step["tool"])
     if tool is None:
       return 3
+
+    live_metrics = os.environ.get("STEP_METRICS_JSON")
+    if live_metrics and step["tool"] == "scaling_predictor":
+        step.setdefault("args", {})["metrics"] = json.loads(live_metrics)
 
     output = tool.forward(**step["args"])
     put.forward(f"{graph_id}:results:{step_id}", output)

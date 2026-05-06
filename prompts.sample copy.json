@@ -1,0 +1,22 @@
+[
+  {
+    "id": "j2ee",
+    "prompt": "research best approaches to building a J2EE Spring Boot server"
+  },
+  {
+    "id": "scaling",
+    "prompt": "given metrics QPS=10 QUEUE_RT=6 INFERENCE=380, should I scale up?"
+  },
+  {
+    "id": "multihop",
+    "prompt": "what year did the company that makes the Claude API release its first model, and which Anthropic founder previously worked at OpenAI?"
+  },
+  {
+    "id": "hard_math",
+    "prompt": "Three real numbers x, y, and z satisfy the following conditions:\n\nThe sum of their squares is 14\nThe sum of their pairwise products is 11\nThe sum of their cubes is 36\n\nTasks:\n\na) Find the value of the sum S = x + y + z\nb) Determine all possible ordered triples (x, y, z) that satisfy the conditions\nc) Among all valid solutions, find the maximum possible value of the product xyz"
+  },
+  {
+    "id": "hard_biology",
+    "prompt": "A researcher is investigating whether body mass index (BMI) has a causal effect on the risk of diffuse large B-cell lymphoma (DLBCL) using genetic data. They construct a polygenic score (PGS) for BMI using 100 independent genetic variants. The following summary information is available: 1) The PGS explains 6% of the variance in BMI in the population. 2) The observational association between BMI and DLBCL shows that each 1-unit increase in BMI is associated with a 12% increase in risk. 3) Using the PGS as an instrumental variable, the estimated effect of genetically predicted BMI on DLBCL risk is a 5% increase per BMI unit. 4) Some of the genetic variants used in the PGS are suspected to have pleiotropic effects (they influence other traits such as inflammation, which may independently affect DLBCL risk). Tasks: a) Explain whether the difference between the observational estimate (12%) and the instrumental variable estimate (5%) suggests confounding, bias, or violation of assumptions. Be precise. b) Identify which core assumptions of Mendelian randomization may be violated in this scenario and how pleiotropy affects the validity of the causal inference. c) Propose at least two statistical methods or sensitivity analyses that could be used to detect or correct for pleiotropy in this setting. d) Suppose removing 20% of the variants suspected of pleiotropy reduces the IV estimate to 3% and increases its variance. Interpret this tradeoff. e) Design a step-by-step analysis plan (algorithmically) that an agent could follow to robustly estimate the causal effect of BMI on DLBCL using genetic instruments. "
+  }
+]

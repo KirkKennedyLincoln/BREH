@@ -2,11 +2,17 @@ import os
 import json
 import time
 import concurrent.futures
-import grpc
+import grpc # type: ignore
 
 from tools import ScalingPredictorTool, build_step_tools
-from gen.python import storage_pb2, storage_pb2_grpc, runner_pb2, runner_pb2_grpc
+from tools.scaling_log import log_decision
 
+try:
+    from tools.docker_metrics import DockerMetricsSource
+except ImportError:
+    DockerMetricsSource = None  # type: ignore[assignment,misc]
+
+from gen.python import storage_pb2, storage_pb2_grpc, runner_pb2, runner_pb2_grpc
 
 class ExecutorAgent:
     def __init__(
@@ -15,126 +21,100 @@ class ExecutorAgent:
         runner_addr: str = "localhost:50055",
         image_name: str = "synthesis-agent:latest",
         models_dir: str = "models",
-        weight_threshold: float = 0.0,
+        weight_threshold: float = 0.85,
+        name_prefix: str = "makakasiguro",
     ):
-        self.channel = grpc.insecure_channel(storage_addr)
-        self.runner_channel = grpc.insecure_channel(runner_addr)
-        self.stub = storage_pb2_grpc.GraphStoreStub(self.channel)
-        self.runner = runner_pb2_grpc.RunnerStub(self.runner_channel)
+        channel = grpc.insecure_channel(storage_addr)
+        runner_channel = grpc.insecure_channel(runner_addr)
+        self.stub = storage_pb2_grpc.GraphStoreStub(channel)
+        self.runner = runner_pb2_grpc.RunnerStub(runner_channel)
         self.tools = build_step_tools(models_dir=models_dir)
         self.scaler: ScalingPredictorTool = self.tools["scaling_predictor"]
         self.image_name = image_name
         self.weight_threshold = weight_threshold
-        self.trace: list[dict] = []  # one entry per step (executed or skipped)
+        self.trace: list[dict] = []
+        self.metrics = DockerMetricsSource() if DockerMetricsSource is not None else None
 
-    def fetch_graph(self, graph_id: str) -> dict | None:
-        resp = self.stub.Get(storage_pb2.GetRequest(id=graph_id))
-        if not resp.graph.id:
+    def fetch_graph(self, graph_id):
+        res = self.stub.Get(request=storage_pb2.GetRequest(id=graph_id))
+
+        # success == false
+        if not res.graph.id:
             return None
-        return json.loads(resp.graph.data)
+        return json.loads(res.graph.data)
 
-    def delete_graph(self, graph_id: str) -> bool:
+    def delete_graph(self, graph_id):
         return self.stub.Delete(storage_pb2.DeleteRequest(id=graph_id)).success
 
-    def update_graph(self, graph_id: str, data: dict) -> bool:
-        graph = storage_pb2.Graph(
-            id=graph_id,
-            data=json.dumps(data),
-            created_at=int(time.time()),
-        )
+    def update_graph(self, graph_id, data):
+        graph = storage_pb2.Graph(id=graph_id, data=json.dumps(data), created_at=int(time.time()))
         return self.stub.Put(storage_pb2.PutRequest(graph=graph)).success
 
-    @staticmethod
-    def _topo_sort(steps: list) -> list:
-        """Topo-sort tolerating a few common LLM hallucinations:
-          - depends_on references a step id that doesn't exist in this graph
-          - depends_on contains the step's own id (self-loop)
-          - depends_on contains duplicates
-        Bad refs are dropped with a warning; the rest of the DAG still runs.
-        """
-        by_id = {s["id"]: s for s in steps}
-        visited: set[str] = set()
-        on_stack: set[str] = set()
-        order: list = []
+    def list_graphs(self, prefix=""):
+        return self.stub.List(storage_pb2.ListRequest(prefix=prefix)).ids
 
-        def visit(sid: str):
-            if sid in visited:
-                return
-            if sid not in by_id:
-                # Hallucinated reference — skip silently after warning.
-                print(f"  [warn] depends_on references unknown step '{sid}'; skipping")
-                return
-            if sid in on_stack:
-                # Cycle detected (e.g. s1 depends on s2 depends on s1).
-                print(f"  [warn] cycle detected at step '{sid}'; breaking")
-                return
-            on_stack.add(sid)
-            for dep in by_id[sid].get("depends_on") or []:
-                visit(dep)
-            on_stack.discard(sid)
-            visited.add(sid)
-            order.append(by_id[sid])
+    def should_spawn(self, step):
+        prediction = step.get("prediction", None)
+        if prediction is not None:
+            return bool(prediction)
+        if step["tool"] == "scaling_predictor":
+            pred = self.scaler.forward(**step["args"])
+            step["prediction"] = pred
+            return bool(pred.get("scale_up", False))
+        return step.get("weight", 0.0) >= 0.5
+    
+    def resolve_metrics(self, step: dict) -> None:
+        if step["tool"] != "scaling_predictor" or self.metrics is None:
+            return
+        try:
+            step.setdefault("args", {})["metrics"] = self.metrics.as_features()
+        except Exception:
+            pass
 
-        for s in steps:
-            visit(s["id"])
-        return order
+    def run_step_in_container(self, graph_id: str, step: dict) -> dict:
+        step_id = step.get("id", None)
 
-    def _run_step_in_container(self, graph_id: str, step: dict) -> dict:
-        """Spawn an agent container for one step, wait for it, then fetch the
-        result the container wrote back to etcd under
-        '{graph_id}:results:{step_id}'."""
         env = [
-            # The container talks to the host's storage server; on Mac Docker
-            # this is reachable as host.docker.internal.
             "STORAGE_ADDR=host.docker.internal:50054",
             f"GRAPH_ID={graph_id}",
-            f"STEP_ID={step['id']}",
+            f"STEP_ID={step_id}",
         ]
-        # Don't pass cmd — the image's ENTRYPOINT (`python agent_entrypoint.py`)
-        # is already correct. Setting cmd here would append to ENTRYPOINT and
-        # produce `python agent_entrypoint.py python agent_entrypoint.py`.
-        spawn_resp = self.runner.Spawn(runner_pb2.SpawnRequest(
-            env=env, image_name=self.image_name,
-        ))
-        self.runner.Wait(runner_pb2.WaitRequest(id=spawn_resp.id))
+        live = (step.get("args") or {}).get("metrics")
+        if step["tool"] == "scaling_predictor" and isinstance(live, dict):
+            env.append(f"STEP_METRICS_JSON={json.dumps(live)}")
 
-        result_key = f"{graph_id}:results:{step['id']}"
-        resp = self.stub.Get(storage_pb2.GetRequest(id=result_key))
-        if not resp.graph.id:
-            return {"error": "container produced no result", "key": result_key}
-        return json.loads(resp.graph.data)
+        spawn = self.runner.Spawn(
+            runner_pb2.SpawnRequest(
+                env=env,
+                image_name=self.image_name,
+            )
+        )
+        self.runner.Wait(runner_pb2.WaitRequest(id=spawn.id))
 
-    def _should_spawn(self, step: dict) -> bool:
-        """Container-allocation router. The trained scaler decides for steps
-        that carry workload metrics in their args (i.e. scaling_predictor
-        steps). For other tools we fall back to a simple weight heuristic —
-        spawn for high-confidence work, run inline for the rest."""
-        if step["tool"] == "scaling_predictor":
-            try:
-                decision = self.scaler.forward(**step["args"])
-                return bool(decision.get("scale_up"))
-            except Exception:
-                pass
-        return step.get("weight", 0.0) >= 0.5
+        id_slug = f"{graph_id}:results:{step_id}"
+        result = self.stub.Get(storage_pb2.GetRequest(id=id_slug))
+        try:
+            self.runner.Kill(runner_pb2.KillRequest(id=spawn.id))
+        except Exception:
+            pass
+        if not result.graph.id:
+            return {"error": "container produced no result", "key": id_slug}
+        return json.loads(result.graph.data)
 
-    def execute(self, graph_id: str, max_workers: int = 8) -> list:
-        """Walk the DAG layer-by-layer, firing all in-degree-zero steps in
-        parallel via a thread pool. gRPC sync stubs and list.append are both
-        thread-safe under CPython's GIL, so no extra locking needed.
-        Skipped (below-threshold) steps still unblock their successors."""
-        graph = self.fetch_graph(graph_id)
+    def execute(self, graph_id, max_workers=8):
+        graph = self.fetch_graph(graph_id=graph_id)
         if graph is None:
             return []
 
-        runner_available = bool(os.getenv("RUNNER_ADDR"))
-        by_id = {s["id"]: s for s in graph["steps"]}
-        in_deg: dict[str, int] = {sid: 0 for sid in by_id}
-        succ: dict[str, list[str]] = {sid: [] for sid in by_id}
+        is_runner = bool(os.getenv("RUNNER_ADDR"))
+        id_to_step = {s["id"]: s for s in graph["steps"]}
+        in_degrees = {sid: 0 for sid in id_to_step}
+        successors = {sid: [] for sid in id_to_step}
         for s in graph["steps"]:
             for dep in s.get("depends_on") or []:
-                if dep in by_id:
-                    in_deg[s["id"]] += 1
-                    succ[dep].append(s["id"])
+                if dep in id_to_step:
+                    in_degrees[s["id"]] += 1
+                    successors[dep].append(s["id"])
 
         def run_one(step: dict) -> dict | None:
             if step["weight"] < self.weight_threshold:
@@ -144,11 +124,26 @@ class ExecutorAgent:
                     "duration_s": 0.0,
                 })
                 return None
+
             t0 = time.monotonic()
-            if runner_available and self._should_spawn(step):
-                output, location = self._run_step_in_container(graph_id, step), "container"
+            self.resolve_metrics(step=step)
+            if is_runner and self.should_spawn(step=step):
+                output, location = self.run_step_in_container(graph_id=graph_id, step=step), "container"
             else:
                 output, location = self.tools[step["tool"]].forward(**step["args"]), "inline"
+
+            if step["tool"] == "scaling_predictor" and isinstance(output, dict):
+                log_decision(
+                    source="executor",
+                    features=(step.get("args") or {}).get("metrics"),
+                    decision=output,
+                    context={
+                        "graph_id": graph_id,
+                        "step_id": step["id"],
+                        "location": location,
+                        "weight": step["weight"],
+                    },
+                )
             self.trace.append({
                 "step_id": step["id"], "tool": step["tool"],
                 "weight": step["weight"], "location": location,
@@ -160,25 +155,33 @@ class ExecutorAgent:
                 "output": output,
             }
 
-        frontier = [sid for sid, d in in_deg.items() if d == 0]
+        ready = [sid for sid, d in in_degrees.items() if d == 0]
+        in_flight: dict = {}
         results: list = []
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            while frontier:
-                futs = {pool.submit(run_one, by_id[sid]): sid for sid in frontier}
-                done_ids = []
-                for fut in concurrent.futures.as_completed(futs):
-                    sid = futs[fut]
-                    done_ids.append(sid)  # advance the frontier even on error
+            while ready or in_flight:
+                # dispatch everything currently ready
+                for sid in ready:
+                    fut = pool.submit(run_one, id_to_step[sid])
+                    in_flight[fut] = sid
+                ready = []
+
+                # advance as soon as ANY step finishes (not the whole batch)
+                done, _ = concurrent.futures.wait(
+                    in_flight.keys(),
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                for fut in done:
+                    sid = in_flight.pop(fut)
+                    step = id_to_step[sid]
                     try:
                         r = fut.result()
                     except Exception as e:
-                        step = by_id[sid]
-                        print(f"  [step {sid} errored: {type(e).__name__}: {e}]")
                         self.trace.append({
                             "step_id": sid, "tool": step.get("tool", "?"),
-                            "weight": step.get("weight", 0.0),
-                            "location": "error", "duration_s": 0.0,
+                            "weight": step.get("weight", 0.0), "location": "error",
+                            "duration_s": 0.0,
                         })
                         results.append({
                             "id": sid, "tool": step.get("tool", "?"),
@@ -186,19 +189,15 @@ class ExecutorAgent:
                             "location": "error",
                             "output": {"error": f"{type(e).__name__}: {e}"},
                         })
-                        continue
-                    if r is not None:
-                        results.append(r)
-                next_frontier: list = []
-                for sid in done_ids:
-                    for s in succ.get(sid, []):
-                        in_deg[s] -= 1
-                        if in_deg[s] == 0:
-                            next_frontier.append(s)
-                frontier = next_frontier
+                    else:
+                        if r is not None:
+                            results.append(r)
+
+                    # advance the frontier for THIS step's successors only
+                    for nxt in successors.get(sid, []):
+                        in_degrees[nxt] -= 1
+                        if in_degrees[nxt] == 0:
+                            ready.append(nxt)
 
         results.sort(key=lambda r: r["weight"], reverse=True)
         return results
-
-    def list_graphs(self, prefix: str = "") -> list:
-        return list(self.stub.List(storage_pb2.ListRequest(prefix=prefix)).ids)
