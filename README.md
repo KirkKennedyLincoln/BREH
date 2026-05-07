@@ -358,26 +358,3 @@ stateDiagram-v2
 | `proto/` | Source-of-truth schemas; regenerated into `gen/` by `task` |
 | `models/` | Trained classifier artifacts (`*.pkl`) |
 | `logs/scaling.jsonl` | Per-decision audit log written by `scaling_log` |
-
-### Cleanup / dead code (not blocking turn-in, but worth a pass)
-
-These won't change behavior, but they're loose ends a reader will notice:
-
-- **`agents/runner_client.py`** — only contains an unused import line. Either
-  delete the file or move runner-channel construction into it.
-- **`tools/__init__.py`** — `'direct_answer_tool'` is in `__all__` but the
-  symbol is never defined. Stale export.
-- **`name_prefix="makakasiguro"`** in `ExecutorAgent.__init__` — accepted as a
-  kwarg but never assigned to `self` or forwarded to `DockerMetricsSource`
-  (which *does* accept a `name_prefix` to filter containers). Either wire it
-  through or drop the param.
-- **`ExecutorAgent.delete_graph`** — defined, never called. Drop unless it's a
-  deliberate admin hook.
-- **`ListGraphsTool`** — exported from `tools/__init__.py` but never
-  instantiated. The CLI `--list` path uses `ExecutorAgent.list_graphs`
-  directly.
-- **`smolagent_baseline.py`** — standalone manual demo; nothing imports it.
-  `bench.py` already runs smolagents as the comparison baseline. Move to
-  `baselines/smolagent.py` if you want to keep it, otherwise delete.
-- **Root `__init__.py`** — empty file at repo root that turns the project
-  into a Python package. Unusual; usually safe to remove.
