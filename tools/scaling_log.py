@@ -1,19 +1,16 @@
 """Append-only audit log of every scaling decision.
 
-JSONL format — one record per scaling_predictor inference, regardless of
-whether it came from the ticker (cheap continuous loop) or the executor
-(LLM-driven DAG step). One file across both so post-hoc analysis can
-reconstruct the full decision timeline.
+JSONL format — one record per scaling_predictor inference made by the
+executor during DAG execution.
 
 Record shape:
     {
       "ts": "2026-05-06T01:30:42.123+00:00",
-      "source": "ticker" | "executor",
+      "source": "executor",
       "features": {BYTES: ..., DUTY: ..., ...},
       "decision": {scale_up: bool, confidence: float, recommendation: str},
       "thresholds": {"confidence": 0.7},      # whatever's relevant
-      "context": {prev_decision, flipped, uncertain, escalated, tick_n,
-                  graph_id, step_id}
+      "context": {graph_id, step_id, location, weight}
     }
 """
 import json

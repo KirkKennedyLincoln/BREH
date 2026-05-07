@@ -16,7 +16,6 @@ source .venv/bin/activate
 
 task up                                           # start etcd + storage :50054 + runner :50055
 task bench -- prompts.sample.json results.csv     # run BREH vs smolagent benchmark
-task ticker -- --interval 5 --threshold 0.55      # optional: continuous scaling-decision loop
 task main -- --plan "High latency detected"       # optional: invoke the BREH CLI directly
 task down                                         # stop everything (idempotent)
 ```
@@ -42,7 +41,6 @@ storage/runner sub-tasks are hidden but still invokable by name.
 | `logs/storage.log` | Storage gRPC server stdout/stderr |
 | `logs/runner.log` | Runner gRPC server stdout/stderr |
 | `logs/bench.log` | Captured `task bench` output |
-| `logs/ticker.log` | Captured `task ticker` output |
 | `logs/main.log` | Captured `task main` output |
 | `logs/scaling.jsonl` | Append-only audit log of every scaling decision |
 
@@ -155,7 +153,6 @@ flowchart TB
         direction LR
         CLI["<<component>><br/>main.py"]
         BENCH["<<component>><br/>bench.py"]
-        TICK["<<component>><br/>ticker.py"]
     end
 
     subgraph host ["Host process (Python)"]
@@ -190,8 +187,6 @@ flowchart TB
     CLI --> EXEC
     BENCH --> PLAN
     BENCH --> EXEC
-    TICK --> PLAN
-    TICK --> EXEC
 
     PLAN -- "litellm" --> LLM
     PLAN -- "gRPC: Put / Get" --> STORAGE
@@ -200,8 +195,6 @@ flowchart TB
     EXEC --> TOOLS
     EXEC --> METRICS
     EXEC --> SLOG
-    TICK --> METRICS
-    TICK --> SLOG
     SLOG --> JSONL
 
     STORAGE -- "client/v3" --> ETCD
@@ -306,36 +299,8 @@ stateDiagram-v2
     }
 
     RunOne --> Advance
-    Advance --> CheckReady : decrement successors[sid];<br/>promote in_degree==0 to ready
+    Advance --> CheckReady : decrement successors[sid]
     SortReturn --> [*] : results.sort by weight
-```
-
-### UML Activity Diagram — `ticker.py` continuous loop
-
-Classifier-first; LLM planner only fires on uncertainty or decision-flip.
-
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> Tick
-    Tick --> CollectMetrics : every interval seconds
-    CollectMetrics --> Predict : DockerMetricsSource.as_features()
-    Predict --> EscalateGate : ScalingPredictorTool.forward()
-
-    state EscalateGate <<choice>>
-    EscalateGate --> LogOnly : confident AND no flip
-    EscalateGate --> Plan : flip OR confidence < threshold
-
-    Plan --> SaveGraph : PlannerAgent.plan(metrics)
-    SaveGraph --> AutoExecuteGate : GraphStore.Put
-
-    state AutoExecuteGate <<choice>>
-    AutoExecuteGate --> Execute : --plan-only NOT set
-    AutoExecuteGate --> LogEscalated : --plan-only set
-    Execute --> LogEscalated : ExecutorAgent.execute
-
-    LogOnly --> Tick : scaling_log.log_decision
-    LogEscalated --> Tick : scaling_log.log_decision
 ```
 
 ### File index
@@ -344,7 +309,6 @@ stateDiagram-v2
 |---|---|
 | `main.py` | CLI driver: `--plan`, `--execute` (with replan loop), `--list` |
 | `bench.py` | Runs BREH and smolagent over the same prompts, emits CSV |
-| `ticker.py` | Continuous classifier-with-escalation loop |
 | `agent_entrypoint.py` | Container-side: read env, run one step, write result to etcd |
 | `agents/planner.py` | LLM round-trips: `plan`, `replan`, `synthesize`, `save_graph` |
 | `agents/executor.py` | DAG fetch, frontier dispatch, container/inline routing |
