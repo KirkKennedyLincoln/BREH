@@ -76,11 +76,6 @@ tasks:
     cmds:
       - mkdir -p logs && python bench.py {{.CLI_ARGS}} 2>&1 | tee logs/bench.log
 
-  ticker:
-    desc: 'Run the continuous scaling ticker. Example: task ticker -- --interval 5 --threshold 0.55'
-    cmds:
-      - mkdir -p logs && python ticker.py {{.CLI_ARGS}} 2>&1 | tee logs/ticker.log
-
 
   # ---------------------------------------------------------------------------
   # Internal building blocks (hidden from `task --list`; still invokable directly)
