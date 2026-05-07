@@ -228,19 +228,19 @@ sequenceDiagram
     U->>P: plan(request, metrics)
     P->>L: prompt(tools, metrics)
     L-->>P: JSON DAG
-    P->>P: Graph(**dict) pydantic validate
+    P->>P: pydantic validate Graph
     P->>S: Put(graph)
     P-->>U: graph dict
 
-    loop until "done" OR max-iterations
+    loop until done OR max-iterations
         U->>E: execute(graph_id)
         E->>S: Get(graph_id)
         S-->>E: graph
         E->>E: frontier dispatch (see Activity)
-        E-->>U: results[]
+        E-->>U: results list
         U->>P: replan(request, accumulated)
         P->>L: prompt(compressed results)
-        L-->>P: {status, answer | graph}
+        L-->>P: status, answer or graph
         alt status == "continue"
             P->>S: Put(new graph)
             U->>U: graph_id = new
@@ -295,7 +295,7 @@ stateDiagram-v2
 
         state Inline {
             [*] --> Forward
-            Forward --> [*] : tools[step.tool].forward(**args)
+            Forward --> [*] : tools[step.tool].forward(args)
         }
 
         Container --> LogDecision
