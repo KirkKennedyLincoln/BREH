@@ -5,58 +5,46 @@ Masters capstone integrating:
 - **Project 5**: Function calling insight (LLM native tool use)
 - **Project 6**: Agentic orchestration patterns (smolagents)
 
-## Structure
+## Quickstart
 
-```
-cmd/storage/       Go gRPC server (etcd wrapper)
-internal/storage/  Go etcd client
-proto/             gRPC service definitions
-gen/
-  storagepb/       Generated Go protos
-  python/          Generated Python protos
-tools/             ScalingPredictorTool (Project 3)
-models/            Trained ML artifacts (.pkl)
-agents/            Planner (LLM) and Executor agents
-main.py            CLI entry point
-```
-
-## Setup
+Five commands cover the full reviewer experience. Run from the repo root.
 
 ```bash
-pip install -r requirements.txt
-task install-tools
-task vendor-googleapis
-task                    # generates Go + Python protos
-task etcd:start
+task setup                                        # one-time: venv, deps, protos, agent image
+source .venv/bin/activate
+# edit .env and set ANTHROPIC_API_KEY (template at .env.example)
+
+task up                                           # start etcd + storage :50054 + runner :50055
+task bench -- prompts.sample.json results.csv     # run BREH vs smolagent benchmark
+task ticker -- --interval 5 --threshold 0.55      # optional: continuous scaling-decision loop
+task main -- --plan "High latency detected"       # optional: invoke the BREH CLI directly
+task down                                         # stop everything (idempotent)
 ```
 
-## Demo
+`task --list` shows only these user-facing commands. The proto-gen, etcd, and
+storage/runner sub-tasks are hidden but still invokable by name.
 
-```bash
-# Terminal 1: storage server
-task storage:run
+### Prerequisites
 
-# Terminal 2: runner server
-task runner:run
+`task setup` checks for these and fails with a clear message if any are missing:
 
-# Terminal 3: ticker server
-python ./demo/ticker.py --interval 5 --threshold 0.55 --cooldown 60
+- Python 3.13+ (`python3 --version`)
+- Go (`go version`)
+- Docker Desktop, daemon running (`docker info`)
+- [Task](https://taskfile.dev/) (the runner this README assumes)
 
-# Terminal 4: bench test
-python bench.py prompts.sample.json results.csv --seeds 1 --throttle 10
-```
+### Outputs
 
-## Run
-
-```bash
-# Terminal 1: storage server
-task storage:run
-
-# Terminal 2: CLI
-python main.py --plan "High latency detected"
-python main.py --execute <graph_id>
-python main.py --list
-```
+| Path | What it is |
+|---|---|
+| `results.csv` | Per-prompt benchmark numbers (wall, tokens, cost USD, parallelism) |
+| `results_answers/` | Per-prompt answer markdown for human review |
+| `logs/storage.log` | Storage gRPC server stdout/stderr |
+| `logs/runner.log` | Runner gRPC server stdout/stderr |
+| `logs/bench.log` | Captured `task bench` output |
+| `logs/ticker.log` | Captured `task ticker` output |
+| `logs/main.log` | Captured `task main` output |
+| `logs/scaling.jsonl` | Append-only audit log of every scaling decision |
 
 ## Architecture
 
@@ -377,23 +365,19 @@ These won't change behavior, but they're loose ends a reader will notice:
 
 - **`agents/runner_client.py`** — only contains an unused import line. Either
   delete the file or move runner-channel construction into it.
-- **`tools/__init__.py:31`** — `'direct_answer_tool'` is in `__all__` but the
-  symbol is never defined anywhere. Stale export.
+- **`tools/__init__.py`** — `'direct_answer_tool'` is in `__all__` but the
+  symbol is never defined. Stale export.
 - **`name_prefix="makakasiguro"`** in `ExecutorAgent.__init__` — accepted as a
   kwarg but never assigned to `self` or forwarded to `DockerMetricsSource`
   (which *does* accept a `name_prefix` to filter containers). Either wire it
-  through (`DockerMetricsSource(name_prefix=name_prefix)`) or drop the param.
-- **`ExecutorAgent.delete_graph`** — defined, never called. If it's an admin
-  hook keep it; otherwise remove.
+  through or drop the param.
+- **`ExecutorAgent.delete_graph`** — defined, never called. Drop unless it's a
+  deliberate admin hook.
 - **`ListGraphsTool`** — exported from `tools/__init__.py` but never
   instantiated. The CLI `--list` path uses `ExecutorAgent.list_graphs`
-  directly. Drop the tool wrapper unless the in-container path needs it.
-- **Root-level result artifacts** — `results_main.csv`, `results_my_main.csv`,
-  `results_v1.csv`, `results_answers_main/`, `results_answers_v0/`,
-  `runner.log`, `storage.log` are all checked into the working tree. Move
-  under a `results/` directory and add to `.gitignore`.
-- **README "Structure" block (lines 10–21 above)** — lists `cmd/storage/` and
-  `tools/`/`agents/` but predates `cmd/runner/`, `ticker.py`, `bench.py`,
-  `agent_entrypoint.py`, `tools/docker_metrics.py`, `tools/scaling_log.py`.
-  The file index table above is the up-to-date version; consider deleting
-  the older block to avoid drift.
+  directly.
+- **`smolagent_baseline.py`** — standalone manual demo; nothing imports it.
+  `bench.py` already runs smolagents as the comparison baseline. Move to
+  `baselines/smolagent.py` if you want to keep it, otherwise delete.
+- **Root `__init__.py`** — empty file at repo root that turns the project
+  into a Python package. Unusual; usually safe to remove.
