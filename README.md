@@ -221,38 +221,38 @@ on wall-clock for decomposable tasks.
 
 ```mermaid
 sequenceDiagram
-    participant U as main.py
+    participant U as main_py
     participant P as PlannerAgent
-    participant S as GraphStore (etcd)
+    participant S as GraphStore
     participant E as ExecutorAgent
-    participant L as LLM (Anthropic)
+    participant L as LLM
 
-    U->>P: plan(request, metrics)
-    P->>L: prompt(tools, metrics)
+    U->>P: plan request and metrics
+    P->>L: prompt with tools and metrics
     L-->>P: JSON DAG
     P->>P: pydantic validate Graph
-    P->>S: Put(graph)
+    P->>S: Put graph
     P-->>U: graph dict
 
-    loop until done OR max-iterations
-        U->>E: execute(graph_id)
-        E->>S: Get(graph_id)
+    loop until done or max iterations
+        U->>E: execute graph_id
+        E->>S: Get graph_id
         S-->>E: graph
-        E->>E: frontier dispatch (see Activity)
+        E->>E: frontier dispatch see Activity
         E-->>U: results list
-        U->>P: replan(request, accumulated)
-        P->>L: prompt(compressed results)
-        L-->>P: status, answer or graph
-        alt status == "continue"
-            P->>S: Put(new graph)
-            U->>U: graph_id = new
-        else status == "done"
-            U-->>U: print answer; break
+        U->>P: replan with accumulated results
+        P->>L: prompt with compressed results
+        L-->>P: status answer or graph
+        alt status is continue
+            P->>S: Put new graph
+            U->>U: graph_id assigned to new
+        else status is done
+            U-->>U: print answer then break
         end
     end
     Note over U,P: fallback if loop exits without answer
-    U->>P: synthesize(request, accumulated)
-    P->>L: prompt(final-answer from partial results)
+    U->>P: synthesize from accumulated results
+    P->>L: prompt for final answer from partial results
     L-->>P: text
 ```
 
