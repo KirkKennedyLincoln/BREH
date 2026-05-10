@@ -13,6 +13,7 @@ Five commands cover the full reviewer experience. Run from the repo root.
 
 ```bash
 task setup                                        # one-time: venv, deps, protos, agent image
+python -m venv .venv
 source .venv/bin/activate
 # edit .env and set ANTHROPIC_API_KEY (template at .env.example)
 
