@@ -1,7 +1,7 @@
 [
   {
     "id": "j2ee",
-    "prompt": "research best approaches to building a J2EE Spring Boot server"
+    "prompt": "research best approaches to building a J2EE Spring Boot server and write the code for a functioning boilerplate hello world"
   },
   {
     "id": "scaling",

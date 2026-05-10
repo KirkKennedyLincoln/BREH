@@ -93,10 +93,11 @@ class ExecutorAgent:
 
         id_slug = f"{graph_id}:results:{step_id}"
         result = self.stub.Get(storage_pb2.GetRequest(id=id_slug))
-        try:
-            self.runner.Kill(runner_pb2.KillRequest(id=spawn.id))
-        except Exception:
-            pass
+        if os.getenv("KEEP_CONTAINERS") != "1":
+            try:
+                self.runner.Kill(runner_pb2.KillRequest(id=spawn.id))
+            except Exception:
+                pass
         if not result.graph.id:
             return {"error": "container produced no result", "key": id_slug}
         return json.loads(result.graph.data)
