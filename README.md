@@ -47,6 +47,19 @@ storage/runner sub-tasks are hidden but still invokable by name.
 | `logs/main.log` | Captured `task main` output |
 | `logs/scaling.jsonl` | Append-only audit log of every scaling decision |
 
+### Project 3 — training pipeline
+
+The `models/*.pkl` artifacts were trained in
+[machine-learning-foundations-project](https://github.com/KirkKennedyLincoln/machine-learning-foundations-project).
+See `modeling.ipynb` in that repo for data generation, feature engineering,
+hyperparameter selection, and evaluation.
+
+Final classifier:
+- `sklearn.ensemble.GradientBoostingClassifier`
+- 9 features: BYTES, CONTROL, DUTY, INFERENCE, LORA, MODEL, PIPELINE, QPS, QUEUE_RT
+- StandardScaler preprocessing
+- n_estimators=200, learning_rate=0.1, max_depth=4, random_state=42
+
 ## Architecture
 
 The system splits planning, storage, execution, and isolation across language
