@@ -54,6 +54,8 @@ The `models/*.pkl` artifacts were trained in
 See `modeling.ipynb` in that repo for data generation, feature engineering,
 hyperparameter selection, and evaluation.
 
+To retrain cleanly, execute `python generate_models.py`
+
 Final classifier:
 - `sklearn.ensemble.GradientBoostingClassifier`
 - 9 features: BYTES, CONTROL, DUTY, INFERENCE, LORA, MODEL, PIPELINE, QPS, QUEUE_RT
