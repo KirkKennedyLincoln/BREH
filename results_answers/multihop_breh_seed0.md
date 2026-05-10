@@ -4,4 +4,4 @@
 
 ---
 
-Anthropic, the company that makes the Claude API, released its first model (Claude) in 2023. Multiple Anthropic founders previously worked at OpenAI: Dario Amodei (who was Vice President of Research at OpenAI) and Daniela Amodei (who also held a leadership position there). In fact, Anthropic was founded in 2021 by seven former OpenAI employees, including the Amodei siblings.
+Anthropic, the company that makes the Claude API, released its first model (Claude 1) in 2023. Multiple Anthropic founders previously worked at OpenAI, including Dario Amodei (who was Vice President of Research at OpenAI) and his sister Daniela Amodei. Anthropic was founded in 2021 by seven former OpenAI employees.
