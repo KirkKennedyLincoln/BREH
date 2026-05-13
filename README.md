@@ -63,10 +63,10 @@ Final classifier:
 - n_estimators=200, learning_rate=0.1, max_depth=4, random_state=42
 
 ## White Paper
-`reflective_synthesis_paper.pdf`
+(reflective_synthesis_paper.pdf)[https://github.com/KirkKennedyLincoln/breh/blob/main/reflective_synthesis_paper.pdf]
 
 ## PowerPoint
-`breh.pdf`
+(breh.pdf)[https://github.com/KirkKennedyLincoln/breh/blob/main/breh.pdf]
 
 ## Architecture
 
