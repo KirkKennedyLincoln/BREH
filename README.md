@@ -3,7 +3,7 @@
 ## Focusing on Sustainable Cloud Scaling Utilizing Agentic AI
 
 Masters capstone integrating:
-- **Project 3**: ML scaling prediction (XGBoost classifier)
+- **Project 3**: ML scaling prediction (Gradient Boost classifier)
 - **Project 5**: Function calling insight (LLM native tool use)
 - **Project 6**: Agentic orchestration patterns (smolagents)
 
@@ -331,7 +331,7 @@ stateDiagram-v2
 | `agents/planner.py` | LLM round-trips: `plan`, `replan`, `synthesize`, `save_graph` |
 | `agents/executor.py` | DAG fetch, frontier dispatch, container/inline routing |
 | `agents/schema.py` | Pydantic `Graph` / `Step` validation models |
-| `tools/scaling_tool.py` | XGBoost `ScalingPredictorTool` (Project 3 model) |
+| `tools/scaling_tool.py` | Gradient Boost `ScalingPredictorTool` (Project 3 model) |
 | `tools/docker_metrics.py` | Live container metrics → feature dict |
 | `tools/scaling_log.py` | Append-only JSONL audit log of every scaling decision |
 | `tools/etcd_tool.py` | `GetGraphTool` / `PutGraphTool` for the in-container path |
