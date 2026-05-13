@@ -62,10 +62,10 @@ Final classifier:
 - StandardScaler preprocessing
 - n_estimators=200, learning_rate=0.1, max_depth=4, random_state=42
 
-### White Paper
+## White Paper
 `reflective_synthesis_paper.pdf`
 
-### PowerPoint
+## PowerPoint
 `breh.pdf`
 
 ## Architecture
